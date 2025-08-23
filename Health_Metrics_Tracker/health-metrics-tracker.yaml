@@ -1,0 +1,306 @@
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 🌱 Health Metrics Tracker - AWS Event-Driven Pipeline for Garmin, Withings, MyFitnessPal
+
+Parameters:
+  RawDataBucketName:
+    Type: String
+    Description: Name for the S3 bucket storing raw health metrics
+
+  ProcessedDataBucketName:
+    Type: String
+    Description: Name for the S3 bucket storing processed/Parquet health metrics
+
+  LambdaGarminName:
+    Type: String
+    Default: 'GarminMetricsLambda'
+    Description: Name for Garmin API Lambda function
+
+  LambdaWithingsName:
+    Type: String
+    Default: 'WithingsMetricsLambda'
+    Description: Name for Withings API Lambda function
+
+  LambdaMyFitnessPalName:
+    Type: String
+    Default: 'MyFitnessPalMetricsLambda'
+    Description: Name for MyFitnessPal API Lambda function
+
+Resources:
+  # S3 Buckets
+  HealthMetricsRawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref RawDataBucketName
+
+  HealthMetricsProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ProcessedDataBucketName
+
+  # API Gateway
+  HealthMetricsApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: HealthMetricsApi
+      Description: API Gateway for Lambda health metrics fetchers
+
+  # Lambda Execution Role (base role for all fetchers)
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HealthMetricsLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Policies:
+        - PolicyName: HealthMetricsLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: 
+                  - !Sub arn:aws:s3:::${RawDataBucketName}/*
+                  - !Sub arn:aws:s3:::${ProcessedDataBucketName}/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  # Lambda Functions
+  GarminMetricsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaGarminName
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json, boto3
+          def handler(event, context):
+              # (insert Garmin API logic here)
+              return {"statusCode":200, "body":"garmin metrics collected"}
+
+  WithingsMetricsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaWithingsName
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json, boto3
+          def handler(event, context):
+              # (insert Withings API logic here)
+              return {"statusCode":200, "body":"withings metrics collected"}
+
+  MyFitnessPalMetricsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaMyFitnessPalName
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json, boto3
+          def handler(event, context):
+              # (insert MyFitnessPal API logic here)
+              return {"statusCode":200, "body":"myfitnesspal metrics collected"}
+
+  # API Gateway Methods to Lambda Resources
+  GarminApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ParentId: !GetAtt HealthMetricsApi.RootResourceId
+      PathPart: garmin
+
+  GarminApiMethodGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ResourceId: !Ref GarminApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GarminMetricsLambda.Arn}/invocations'
+
+  WithingsApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ParentId: !GetAtt HealthMetricsApi.RootResourceId
+      PathPart: withings
+
+  WithingsApiMethodGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ResourceId: !Ref WithingsApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WithingsMetricsLambda.Arn}/invocations'
+
+  MyFitnessPalApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ParentId: !GetAtt HealthMetricsApi.RootResourceId
+      PathPart: myfitnesspal
+
+  MyFitnessPalApiMethodGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref HealthMetricsApi
+      ResourceId: !Ref MyFitnessPalApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyFitnessPalMetricsLambda.Arn}/invocations'
+
+  # CloudTrail - S3 data event logging
+  HealthMetricsCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      TrailName: HealthMetricsCloudTrail
+      S3BucketName: !Ref RawDataBucketName
+      IsLogging: true
+      EnableLogFileValidation: true
+      IncludeGlobalServiceEvents: false
+      IsMultiRegionTrail: false
+      EventSelectors:
+        - ReadWriteType: WriteOnly
+          DataResources:
+            - Type: AWS::S3::Object
+              Values:
+                - !Sub 'arn:aws:s3:::${RawDataBucketName}/health-metrics-raw/'
+
+  # EventBridge - trigger Glue workflow
+  HealthMetricsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: HealthMetricsWorkflowTriggerRule
+      Description: Triggers Glue workflow when S3 data uploaded
+      EventPattern:
+        source:
+          - "aws.s3"
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource:
+            - "s3.amazonaws.com"
+          eventName:
+            - "PutObject"
+          requestParameters:
+            bucketName:
+              - !Ref RawDataBucketName
+            key:
+              - prefix: "health-metrics-raw/"
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/HealthMetricsGlueWorkflow'
+          Id: GlueWorkflowTrigger
+
+  # Glue Data Catalog & Workflow
+  HealthMetricsGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: health_metrics_db
+
+  HealthMetricsGlueWorkflow:
+    Type: AWS::Glue::Workflow
+    Properties:
+      Name: HealthMetricsGlueWorkflow
+      Description: ETL pipeline for health data transformation
+
+  # Glue Crawler (detect new partitions)
+  HealthMetricsGlueCrawlerRaw:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: health-metrics-raw-crawler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      DatabaseName: !Ref HealthMetricsGlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${RawDataBucketName}/health-metrics-raw/'
+      SchemaChangePolicy:
+        UpdateBehavior: LOG
+        DeleteBehavior: LOG
+
+  HealthMetricsGlueCrawlerProcessed:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: health-metrics-processed-crawler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      DatabaseName: !Ref HealthMetricsGlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${ProcessedDataBucketName}/health-metrics-processed/'
+      SchemaChangePolicy:
+        UpdateBehavior: LOG
+        DeleteBehavior: LOG
+
+  # SNS Topic for notifications
+  HealthMetricsDailySummaryTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Health Metrics Daily Summary Topic
+
+  # Athena (Table - for processed metrics, full DB setup requires extra permissions)
+  HealthMetricsAthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: HealthMetricsAthenaWG
+      State: ENABLED
+      Description: Workgroup for querying health metric processed data
+
+Outputs:
+  RawDataBucket:
+    Description: Health Metrics raw data bucket
+    Value: !Ref HealthMetricsRawBucket
+
+  ProcessedDataBucket:
+    Description: Health Metrics processed data bucket
+    Value: !Ref HealthMetricsProcessedBucket
+
+  ApiGatewayRestApiId:
+    Description: API Gateway REST API ID
+    Value: !Ref HealthMetricsApi
+
+  GlueWorkflowName:
+    Description: Glue workflow name
+    Value: !Ref HealthMetricsGlueWorkflow
+
+  SNSDailySummaryTopicArn:
+    Description: SNS topic for daily email summaries
+    Value: !Ref HealthMetricsDailySummaryTopic
+
+  AthenaWorkGroupArn:
+    Description: Athena Workgroup for Queries
+    Value: !Ref HealthMetricsAthenaWorkGroup
+```
